@@ -1,5 +1,7 @@
 import os
+import re
 import logging
+import tempfile
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
@@ -8,11 +10,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+AUDD_API_TOKEN = os.environ.get("AUDD_API_TOKEN")
 
 WELCOME_TEXT = (
     "🎧 به ربات رسمی DJ Ar3in خوش اومدی!\n\n"
     "🎵 برای جستجوی آهنگ، اسم آهنگ یا خواننده رو برام بفرست.\n"
+    "🎬 لینک ریلز اینستاگرام رو هم بفرستی، آهنگشو برات پیدا می‌کنم!\n"
     "🎤 برای رزرو و بوکینگ دی‌جی، از /booking استفاده کن.\n"
+)
+
+INSTAGRAM_LINK_PATTERN = re.compile(
+    r"(https?://)?(www\.)?instagram\.com/(reel|reels|p|tv)/[A-Za-z0-9_\-]+/?"
 )
 
 
@@ -40,9 +48,116 @@ def search_itunes(query: str, limit: int = 5):
         return []
 
 
+def download_instagram_audio(url: str, out_path: str) -> bool:
+    """Download the audio track of an Instagram reel/post using yt-dlp."""
+    try:
+        import yt_dlp
+    except ImportError:
+        logger.error("yt-dlp is not installed")
+        return False
+
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": out_path,
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "128",
+            }
+        ],
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        return True
+    except Exception as e:
+        logger.error(f"yt-dlp download error: {e}")
+        return False
+
+
+def recognize_song_with_audd(file_path: str):
+    """Send an audio file to AudD and return the recognition result dict, or None."""
+    if not AUDD_API_TOKEN:
+        logger.error("AUDD_API_TOKEN is not set")
+        return None
+
+    url = "https://api.audd.io/"
+    try:
+        with open(file_path, "rb") as f:
+            files = {"file": f}
+            data = {"api_token": AUDD_API_TOKEN, "return": "apple_music,spotify"}
+            resp = requests.post(url, data=data, files=files, timeout=30)
+        resp.raise_for_status()
+        result = resp.json()
+        if result.get("status") == "success" and result.get("result"):
+            return result["result"]
+        return None
+    except Exception as e:
+        logger.error(f"AudD recognition error: {e}")
+        return None
+
+
+async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TYPE, link: str):
+    status_msg = await update.message.reply_text("🎬 در حال دانلود ریلز و تشخیص آهنگ... ⏳")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        out_template = os.path.join(tmp_dir, "reel_audio.%(ext)s")
+        ok = download_instagram_audio(link, out_template)
+
+        if not ok:
+            await status_msg.edit_text(
+                "😔 نتونستم ویدیو رو دانلود کنم. ممکنه لینک خصوصی یا نامعتبر باشه."
+            )
+            return
+
+        audio_file = None
+        for fname in os.listdir(tmp_dir):
+            if fname.endswith(".mp3"):
+                audio_file = os.path.join(tmp_dir, fname)
+                break
+
+        if not audio_file:
+            await status_msg.edit_text("😔 فایل صوتی پیدا نشد.")
+            return
+
+        result = recognize_song_with_audd(audio_file)
+
+        if not result:
+            await status_msg.edit_text(
+                "😔 نتونستم آهنگ رو تشخیص بدم. شاید موزیک تو ریلز واضح نبود."
+            )
+            return
+
+        song_name = result.get("title", "نامشخص")
+        artist = result.get("artist", "نامشخص")
+        apple_music = result.get("apple_music", {}) or {}
+        spotify = result.get("spotify", {}) or {}
+
+        caption = f"🎵 {song_name}\n🎤 {artist}"
+
+        buttons = []
+        if apple_music.get("url"):
+            buttons.append([InlineKeyboardButton("🍎 Apple Music", url=apple_music["url"])])
+        if spotify.get("external_urls", {}).get("spotify"):
+            buttons.append(
+                [InlineKeyboardButton("🟢 Spotify", url=spotify["external_urls"]["spotify"])]
+            )
+        markup = InlineKeyboardMarkup(buttons) if buttons else None
+
+        await status_msg.edit_text(caption, reply_markup=markup)
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     if not query:
+        return
+
+    if INSTAGRAM_LINK_PATTERN.search(query):
+        await handle_instagram_link(update, context, query)
         return
 
     await update.message.reply_text(f"🔍 در حال جستجوی «{query}»...")
@@ -95,4 +210,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()            
