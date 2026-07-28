@@ -3,6 +3,7 @@ import re
 import logging
 import tempfile
 import requests
+import imageio_ffmpeg
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
@@ -62,6 +63,7 @@ def download_instagram_audio(url: str, out_path: str) -> bool:
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
