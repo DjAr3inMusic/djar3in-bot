@@ -118,12 +118,12 @@ async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
 audio_file = None
-        for fname in os.listdir(tmp_dir):
+for fname in os.listdir(tmp_dir):
             if fname.endswith(".mp3"):
                 audio_file = os.path.join(tmp_dir, fname)
                 break
 
-        for fname in os.listdir(tmp_dir):
+for fname in os.listdir(tmp_dir):
             if fname.endswith((".mp4", ".mov", ".mkv", ".webm")):
                 video_file = os.path.join(tmp_dir, fname)
                 try:
@@ -133,10 +133,10 @@ audio_file = None
                     logger.error(f"Failed to send video: {e}")
                 break
 
-        if not audio_file:
+if not audio_file:
             await status_msg.edit_text("😔 صوتی پیدا نشد.")
             return
-        result = recognize_song_with_audd(audio_file)
+result = recognize_song_with_audd(audio_file)
 
         if not result:
             await status_msg.edit_text(
