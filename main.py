@@ -58,7 +58,7 @@ def download_instagram_audio(url: str, out_path: str) -> bool:
         return False
 
     ydl_opts = {
-        "format": "bestaudio/best",
+        "format": "best",
         "outtmpl": out_path,
         "quiet": True,
         "no_warnings": True,
@@ -71,6 +71,7 @@ def download_instagram_audio(url: str, out_path: str) -> bool:
                 "preferredquality": "128",
             }
         ],
+        "keepvideo": True,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -116,16 +117,25 @@ async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TY
             )
             return
 
-        audio_file = None
+audio_file = None
         for fname in os.listdir(tmp_dir):
             if fname.endswith(".mp3"):
                 audio_file = os.path.join(tmp_dir, fname)
                 break
 
-        if not audio_file:
-            await status_msg.edit_text("😔 فایل صوتی پیدا نشد.")
-            return
+        for fname in os.listdir(tmp_dir):
+            if fname.endswith((".mp4", ".mov", ".mkv", ".webm")):
+                video_file = os.path.join(tmp_dir, fname)
+                try:
+                    with open(video_file, "rb") as vf:
+                        await context.bot.send_video(chat_id=update.effective_chat.id, video=vf)
+                except Exception as e:
+                    logger.error(f"Failed to send video: {e}")
+                break
 
+        if not audio_file:
+            await status_msg.edit_text("😔 صوتی پیدا نشد.")
+            return
         result = recognize_song_with_audd(audio_file)
 
         if not result:
