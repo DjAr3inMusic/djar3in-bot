@@ -69,7 +69,7 @@ def download_instagram_audio(url: str, out_path: str) -> bool:
         "no_warnings": True,
         "noplaylist": True,
         "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
-        "postprocessors": [{"key": "FFmpegExtractAudio"}],
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
         "keepvideo": True,
     }
     try:
