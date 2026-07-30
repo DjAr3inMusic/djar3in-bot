@@ -138,7 +138,7 @@ if not audio_file:
             return
 result = recognize_song_with_audd(audio_file)
 
-        if not result:
+if not result:
             await status_msg.edit_text(
                 "😔 نتونستم آهنگ رو تشخیص بدم. شاید موزیک تو ریلز واضح نبود."
             )
