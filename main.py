@@ -143,15 +143,14 @@ if not result:
                 "😔 نتونستم آهنگ رو تشخیص بدم. شاید موزیک تو ریلز واضح نبود."
             )
             return
+song_name = result.get("title", "نامشخص")
+artist = result.get("artist", "نامشخص")
+apple_music = result.get("apple_music", {}) or {}
+spotify = result.get("spotify", {}) or {}
 
-        song_name = result.get("title", "نامشخص")
-        artist = result.get("artist", "نامشخص")
-        apple_music = result.get("apple_music", {}) or {}
-        spotify = result.get("spotify", {}) or {}
+caption = f"🎵 {song_name}\n🎤 {artist}"
 
-        caption = f"🎵 {song_name}\n🎤 {artist}"
-
-        buttons = []
+buttons = []
         if apple_music.get("url"):
             buttons.append([InlineKeyboardButton("🍎 Apple Music", url=apple_music["url"])])
         if spotify.get("external_urls", {}).get("spotify"):
