@@ -89,7 +89,7 @@ async def send_itunes_preview(update: Update, song_name: str):
         await update.message.reply_text(caption)
 
 
-def download_song_from_youtube(query: str, output_base: str):
+def download_song(query: str, output_base: str, search_prefix: str):
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": output_base + ".%(ext)s",
@@ -97,7 +97,7 @@ def download_song_from_youtube(query: str, output_base: str):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "default_search": "ytsearch1",
+        "default_search": search_prefix,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -131,15 +131,20 @@ async def search_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     output_base = f"/tmp/{file_id}"
     mp3_path = output_base + ".mp3"
 
-    try:
-        info = download_song_from_youtube(song_name, output_base)
-    except Exception as e:
-        logger.error(f"YouTube download error: {e}")
-        await update.message.reply_text("دانلود کامل ممکن نشد، در حال ارسال پیش‌نمایش... 🔄")
-        await send_itunes_preview(update, song_name)
-        return
+    info = None
+    source_name = ""
 
-    if not os.path.exists(mp3_path):
+    for search_prefix, label in (("ytsearch1", "یوتیوب"), ("scsearch1", "ساندکلاود")):
+        try:
+            info = download_song(song_name, output_base, search_prefix)
+            if info and os.path.exists(mp3_path):
+                source_name = label
+                break
+        except Exception as e:
+            logger.error(f"{label} download error: {e}")
+            info = None
+
+    if not info or not os.path.exists(mp3_path):
         await update.message.reply_text("دانلود کامل ممکن نشد، در حال ارسال پیش‌نمایش... 🔄")
         await send_itunes_preview(update, song_name)
         return
