@@ -4,6 +4,7 @@ import logging
 import tempfile
 import requests
 import imageio_ffmpeg
+from urllib.parse import quote
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -21,7 +22,7 @@ AUDD_API_TOKEN = os.environ.get("AUDD_API_TOKEN")
 
 WELCOME_TEXT = (
     "🎧 خوش اومدی به ربات رسمی DJ Ar3in!\n\n"
-    "🎵 اسم آهنگ یا خواننده رو برام بفرست تا پیداش کنم.\n"
+    "🎵 اسم آهنگ یا خواننده رو برام بفرست تا کاملشو برات پیدا کنم.\n"
     "📸 یا لینک ریلز اینستاگرام رو بفرست تا اسم آهنگش رو پیدا کنم.\n"
     "🎤 برای رزرو دی‌جی از دستور /booking استفاده کن."
 )
@@ -41,17 +42,49 @@ async def booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-def search_itunes(query: str, limit: int = 5):
+def search_itunes_meta(query: str):
+    """Get accurate title/artist/link from iTunes (metadata only, not audio)."""
     try:
         url = "https://itunes.apple.com/search"
-        params = {"term": query, "media": "music", "limit": limit}
+        params = {"term": query, "media": "music", "limit": 1}
         resp = requests.get(url, params=params, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-        return data.get("results", [])
+        results = resp.json().get("results", [])
+        if results:
+            return results[0]
+        return None
     except Exception as e:
         logger.error(f"iTunes search error: {e}")
-        return []
+        return None
+
+
+def download_youtube_audio(query: str, out_path: str) -> bool:
+    """Search YouTube and download the full audio of the best match."""
+    try:
+        import yt_dlp
+    except ImportError:
+        logger.error("yt-dlp is not installed")
+        return False
+
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": out_path,
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "default_search": "ytsearch1",
+        "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
+        "postprocessors": [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+        ],
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([query])
+        return True
+    except Exception as e:
+        logger.error(f"yt-dlp youtube download error: {e}")
+        return False
 
 
 def download_instagram_audio(url: str, out_path: str) -> bool:
@@ -108,6 +141,12 @@ def recognize_song_with_audd(file_path: str):
         return None
 
 
+def build_lyrics_button(song_name: str, artist: str):
+    query = quote(f"{artist} {song_name} lyrics")
+    url = f"https://www.google.com/search?q={query}"
+    return InlineKeyboardButton("📝 متن ترانه", url=url)
+
+
 async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TYPE, link: str):
     status_msg = await update.message.reply_text("🔎 در حال بررسی لینک...")
 
@@ -149,12 +188,12 @@ async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TY
         apple_music = result.get("apple_music", {}) or {}
         spotify = result.get("spotify", {}) or {}
 
-        buttons = []
+        buttons = [[build_lyrics_button(song_name, artist)]]
         if apple_music.get("url"):
             buttons.append([InlineKeyboardButton("🍎 Apple Music", url=apple_music["url"])])
         if spotify.get("external_urls", {}).get("spotify"):
             buttons.append([InlineKeyboardButton("🎧 Spotify", url=spotify["external_urls"]["spotify"])])
-        markup = InlineKeyboardMarkup(buttons) if buttons else None
+        markup = InlineKeyboardMarkup(buttons)
 
         await status_msg.delete()
 
@@ -182,36 +221,49 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_instagram_link(update, context, match.group(1))
         return
 
-    await update.message.reply_text(f"🔍 در حال جستجوی «{query}»...")
+    status_msg = await update.message.reply_text(f"🔍 در حال جستجوی «{query}»...")
 
-    results = search_itunes(query)
-    if not results:
-        await update.message.reply_text("😔 چیزی پیدا نشد، اسم دقیق‌تری امتحان کن.")
-        return
+    meta = search_itunes_meta(query)
+    song_name = meta.get("trackName") if meta else query
+    artist = meta.get("artistName") if meta else ""
+    search_query = f"{artist} {song_name}".strip() if meta else query
 
-    for track in results:
-        song_name = track.get("trackName", "نامشخص")
-        artist = track.get("artistName", "نامشخص")
-        preview_url = track.get("previewUrl")
-        itunes_link = track.get("trackViewUrl")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        out_template = os.path.join(tmp_dir, "song.%(ext)s")
+        ok = download_youtube_audio(search_query, out_template)
 
-        buttons = []
-        if itunes_link:
-            buttons.append([InlineKeyboardButton("🔗 لینک رسمی", url=itunes_link)])
-        markup = InlineKeyboardMarkup(buttons) if buttons else None
+        if not ok:
+            await status_msg.edit_text("😔 چیزی پیدا نشد، اسم دقیق‌تری امتحان کن.")
+            return
 
-        if preview_url:
-            try:
-                await update.message.reply_audio(
-                    audio=preview_url,
+        audio_file = None
+        for fname in os.listdir(tmp_dir):
+            if fname.endswith(".mp3"):
+                audio_file = os.path.join(tmp_dir, fname)
+                break
+
+        if not audio_file:
+            await status_msg.edit_text("😔 دانلود آهنگ با مشکل مواجه شد.")
+            return
+
+        buttons = [[build_lyrics_button(song_name, artist)]]
+        if meta and meta.get("trackViewUrl"):
+            buttons.append([InlineKeyboardButton("🔗 لینک رسمی", url=meta["trackViewUrl"])])
+        markup = InlineKeyboardMarkup(buttons)
+
+        await status_msg.delete()
+
+        try:
+            with open(audio_file, "rb") as af:
+                await context.bot.send_audio(
+                    chat_id=update.effective_chat.id,
+                    audio=af,
                     title=song_name,
                     performer=artist,
                     reply_markup=markup,
                 )
-            except Exception as e:
-                logger.error(f"Error sending preview: {e}")
-                await update.message.reply_text(f"🎵 {song_name}\n🎤 {artist}", reply_markup=markup)
-        else:
+        except Exception as e:
+            logger.error(f"Error sending song: {e}")
             await update.message.reply_text(f"🎵 {song_name}\n🎤 {artist}", reply_markup=markup)
 
 
@@ -230,4 +282,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()      
+    main()
