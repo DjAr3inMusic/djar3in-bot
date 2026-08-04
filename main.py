@@ -46,6 +46,49 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+def search_itunes(song_name: str):
+    url = "https://itunes.apple.com/search"
+    params = {"term": song_name, "media": "music", "limit": 1}
+    resp = requests.get(url, params=params, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("results", [])
+
+
+async def send_itunes_preview(update: Update, song_name: str):
+    try:
+        results = search_itunes(song_name)
+    except Exception as e:
+        logger.error(f"iTunes search error: {e}")
+        await update.message.reply_text("چیزی پیدا نشد، اسم دقیق‌تری امتحان کن 😕")
+        return
+
+    if not results:
+        await update.message.reply_text("چیزی پیدا نشد 😕")
+        return
+
+    track = results[0]
+    title = track.get("trackName", song_name)
+    artist = track.get("artistName", "")
+    preview_url = track.get("previewUrl")
+
+    caption = f"🎵 {title}"
+    if artist:
+        caption += f"\n👤 {artist}"
+    caption += "\n\n⚠️ فقط پیش‌نمایش کوتاه در دسترسه (یوتیوب فعلاً محدودیت داره)"
+
+    if preview_url:
+        try:
+            await update.message.reply_audio(
+                audio=preview_url, title=title, performer=artist, caption=caption
+            )
+        except Exception as e:
+            logger.error(f"Send preview error: {e}")
+            await update.message.reply_text(caption)
+    else:
+        await update.message.reply_text(caption)
+
+
 def download_song_from_youtube(query: str, output_base: str):
     ydl_opts = {
         "format": "bestaudio/best",
@@ -92,11 +135,13 @@ async def search_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, s
         info = download_song_from_youtube(song_name, output_base)
     except Exception as e:
         logger.error(f"YouTube download error: {e}")
-        await update.message.reply_text("چیزی پیدا نشد یا خطا توی دانلود، اسم دقیق‌تری امتحان کن 😕")
+        await update.message.reply_text("دانلود کامل ممکن نشد، در حال ارسال پیش‌نمایش... 🔄")
+        await send_itunes_preview(update, song_name)
         return
 
     if not os.path.exists(mp3_path):
-        await update.message.reply_text("فایل پیدا نشد، دوباره امتحان کن.")
+        await update.message.reply_text("دانلود کامل ممکن نشد، در حال ارسال پیش‌نمایش... 🔄")
+        await send_itunes_preview(update, song_name)
         return
 
     title = info.get("title", song_name)
