@@ -69,7 +69,9 @@ def download_instagram_audio(url: str, out_path: str) -> bool:
         "no_warnings": True,
         "noplaylist": True,
         "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
-        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
+        "postprocessors": [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+        ],
         "keepvideo": True,
     }
     try:
@@ -147,8 +149,6 @@ async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TY
         apple_music = result.get("apple_music", {}) or {}
         spotify = result.get("spotify", {}) or {}
 
-        caption = f"🎵 {song_name}\n🎤 {artist}"
-
         buttons = []
         if apple_music.get("url"):
             buttons.append([InlineKeyboardButton("🍎 Apple Music", url=apple_music["url"])])
@@ -156,7 +156,20 @@ async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TY
             buttons.append([InlineKeyboardButton("🎧 Spotify", url=spotify["external_urls"]["spotify"])])
         markup = InlineKeyboardMarkup(buttons) if buttons else None
 
-        await status_msg.edit_text(caption, reply_markup=markup)
+        await status_msg.delete()
+
+        try:
+            with open(audio_file, "rb") as af:
+                await context.bot.send_audio(
+                    chat_id=update.effective_chat.id,
+                    audio=af,
+                    title=song_name,
+                    performer=artist,
+                    reply_markup=markup,
+                )
+        except Exception as e:
+            logger.error(f"Error sending recognized audio: {e}")
+            await update.message.reply_text(f"🎵 {song_name}\n🎤 {artist}", reply_markup=markup)
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -180,26 +193,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         song_name = track.get("trackName", "نامشخص")
         artist = track.get("artistName", "نامشخص")
         preview_url = track.get("previewUrl")
-        artwork = track.get("artworkUrl100")
         itunes_link = track.get("trackViewUrl")
-
-        caption = f"🎵 {song_name}\n🎤 {artist}"
 
         buttons = []
         if itunes_link:
             buttons.append([InlineKeyboardButton("🔗 لینک رسمی", url=itunes_link)])
         markup = InlineKeyboardMarkup(buttons) if buttons else None
 
-        if artwork:
-            await update.message.reply_photo(photo=artwork, caption=caption, reply_markup=markup)
-        else:
-            await update.message.reply_text(caption, reply_markup=markup)
-
         if preview_url:
             try:
-                await update.message.reply_audio(audio=preview_url)
+                await update.message.reply_audio(
+                    audio=preview_url,
+                    title=song_name,
+                    performer=artist,
+                    reply_markup=markup,
+                )
             except Exception as e:
                 logger.error(f"Error sending preview: {e}")
+                await update.message.reply_text(f"🎵 {song_name}\n🎤 {artist}", reply_markup=markup)
+        else:
+            await update.message.reply_text(f"🎵 {song_name}\n🎤 {artist}", reply_markup=markup)
 
 
 def main():
@@ -217,4 +230,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()      
