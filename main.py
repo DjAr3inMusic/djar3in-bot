@@ -113,6 +113,51 @@ def download_song(query: str, output_base: str, search_prefix: str):
         return info
 
 
+async def download_and_send_song(update: Update, song_name: str, unique_id: str) -> bool:
+    """Try to download the full song (SoundCloud -> YouTube) and send it.
+    Returns True if a song was successfully sent, False otherwise."""
+    output_base = f"/tmp/{unique_id}"
+    mp3_path = output_base + ".mp3"
+
+    info = None
+
+    sources = (
+        ("scsearch1", song_name, "ساندکلاود"),
+        ("ytsearch1", f"{song_name} official audio", "یوتیوب"),
+        ("ytsearch1", song_name, "یوتیوب"),
+    )
+
+    for search_prefix, query, label in sources:
+        try:
+            info = download_song(query, output_base, search_prefix)
+            if info and os.path.exists(mp3_path):
+                break
+            info = None
+        except Exception as e:
+            logger.error(f"{label} download error: {e}")
+            info = None
+
+    if not info or not os.path.exists(mp3_path):
+        return False
+
+    title = info.get("title", song_name)
+    uploader = info.get("uploader", "")
+    caption = f"🎵 {title}"
+    if uploader:
+        caption += f"\n👤 {uploader}"
+
+    try:
+        with open(mp3_path, "rb") as audio_file:
+            await update.message.reply_audio(audio=audio_file, title=title, caption=caption)
+        return True
+    except Exception as e:
+        logger.error(f"Send audio error: {e}")
+        return False
+    finally:
+        if os.path.exists(mp3_path):
+            os.remove(mp3_path)
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_text = update.message.text.strip()
 
@@ -127,49 +172,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def search_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, song_name: str):
     await update.message.reply_text("در حال جستجو و دانلود آهنگ کامل... 🔍🎶")
 
-    file_id = str(update.message.message_id)
-    output_base = f"/tmp/{file_id}"
-    mp3_path = output_base + ".mp3"
+    unique_id = str(update.message.message_id)
+    success = await download_and_send_song(update, song_name, unique_id)
 
-    info = None
-    source_name = ""
-
-    sources = (
-        ("scsearch1", song_name, "ساندکلاود"),
-        ("ytsearch1", f"{song_name} official audio", "یوتیوب"),
-        ("ytsearch1", song_name, "یوتیوب"),
-    )
-
-    for search_prefix, query, label in sources:
-        try:
-            info = download_song(query, output_base, search_prefix)
-            if info and os.path.exists(mp3_path):
-                source_name = label
-                break
-        except Exception as e:
-            logger.error(f"{label} download error: {e}")
-            info = None
-
-    if not info or not os.path.exists(mp3_path):
+    if not success:
         await update.message.reply_text("دانلود کامل ممکن نشد، در حال ارسال پیش‌نمایش... 🔄")
         await send_itunes_preview(update, song_name)
-        return
-
-    title = info.get("title", song_name)
-    uploader = info.get("uploader", "")
-    caption = f"🎵 {title}"
-    if uploader:
-        caption += f"\n👤 {uploader}"
-
-    try:
-        with open(mp3_path, "rb") as audio_file:
-            await update.message.reply_audio(audio=audio_file, title=title, caption=caption)
-    except Exception as e:
-        logger.error(f"Send audio error: {e}")
-        await update.message.reply_text("خطا در ارسال فایل صوتی.")
-    finally:
-        if os.path.exists(mp3_path):
-            os.remove(mp3_path)
 
 
 def download_instagram_media(url: str, output_path: str):
@@ -230,6 +238,14 @@ async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TY
             title = song_info.get("title", "نامشخص")
             artist = song_info.get("artist", "نامشخص")
             await update.message.reply_text(f"🎵 {title}\n👤 {artist}")
+
+            if title != "نامشخص":
+                await update.message.reply_text("در حال دانلود آهنگ کامل... 🔍🎶")
+                query = f"{title} {artist}".strip()
+                unique_id = f"{update.message.message_id}_full"
+                success = await download_and_send_song(update, query, unique_id)
+                if not success:
+                    await update.message.reply_text("دانلود آهنگ کامل ممکن نشد 😕")
         else:
             await update.message.reply_text("آهنگ شناسایی نشد 🙁")
     except Exception as e:
