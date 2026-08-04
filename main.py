@@ -134,9 +134,15 @@ async def search_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, s
     info = None
     source_name = ""
 
-    for search_prefix, label in (("ytsearch1", "یوتیوب"), ("scsearch1", "ساندکلاود")):
+    sources = (
+        ("scsearch1", song_name, "ساندکلاود"),
+        ("ytsearch1", f"{song_name} official audio", "یوتیوب"),
+        ("ytsearch1", song_name, "یوتیوب"),
+    )
+
+    for search_prefix, query, label in sources:
         try:
-            info = download_song(song_name, output_base, search_prefix)
+            info = download_song(query, output_base, search_prefix)
             if info and os.path.exists(mp3_path):
                 source_name = label
                 break
