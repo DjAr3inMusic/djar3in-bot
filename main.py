@@ -40,7 +40,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "سلام! به ربات DJ Ar3in Music خوش اومدی 🎧\n\n"
         "- اسم آهنگ بفرست تا برات پیدا کنم\n"
-        "- لینک ریلز اینستاگرام بفرست تا صدا و اسم آهنگش رو بگیرم"
+        "- لینک ریلز اینستاگرام بفرست تا صدا و اسم آهنگش رو بگیرم\n"
+        "- برای رزرو دی‌جی از دستور /booking استفاده کن"
     )
     await update.message.reply_text(text)
 
