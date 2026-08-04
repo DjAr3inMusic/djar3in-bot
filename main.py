@@ -25,6 +25,17 @@ FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 INSTAGRAM_REGEX = re.compile(r"(https?://(?:www\.)?instagram\.com/\S+)")
 
 
+async def booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "🎧 رزرو دی‌جی Ar3in\n\n"
+        "📱 شماره تماس: 09179493668\n"
+        "💬 واتساپ: @DjAr3in\n"
+        "📸 اینستاگرام: @official_arsen69\n"
+        "✈️ کانال تلگرام: DJ Ar3in Music"
+    )
+    await update.message.reply_text(text)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "سلام! به ربات DJ Ar3in Music خوش اومدی 🎧\n\n"
@@ -34,13 +45,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-def search_itunes(song_name: str):
-    url = "https://itunes.apple.com/search"
-    params = {"term": song_name, "media": "music", "limit": 5}
-    resp = requests.get(url, params=params, timeout=15)
-    resp.raise_for_status()
-    data = resp.json()
-    return data.get("results", [])
+def download_song_from_youtube(query: str, output_base: str):
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": output_base + ".%(ext)s",
+        "ffmpeg_location": FFMPEG_PATH,
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "default_search": "ytsearch1",
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }
+        ],
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(query, download=True)
+        if "entries" in info:
+            info = info["entries"][0]
+        return info
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,39 +81,38 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def search_and_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, song_name: str):
-    await update.message.reply_text("در حال جستجو... 🔍")
+    await update.message.reply_text("در حال جستجو و دانلود آهنگ کامل... 🔍🎶")
+
+    file_id = str(update.message.message_id)
+    output_base = f"/tmp/{file_id}"
+    mp3_path = output_base + ".mp3"
+
     try:
-        results = search_itunes(song_name)
+        info = download_song_from_youtube(song_name, output_base)
     except Exception as e:
-        logger.error(f"iTunes search error: {e}")
-        await update.message.reply_text("خطا در جستجو، دوباره امتحان کن.")
+        logger.error(f"YouTube download error: {e}")
+        await update.message.reply_text("چیزی پیدا نشد یا خطا توی دانلود، اسم دقیق‌تری امتحان کن 😕")
         return
 
-    if not results:
-        await update.message.reply_text("چیزی پیدا نشد 😕")
+    if not os.path.exists(mp3_path):
+        await update.message.reply_text("فایل پیدا نشد، دوباره امتحان کن.")
         return
 
-    for track in results:
-        title = track.get("trackName", "نامشخص")
-        artist = track.get("artistName", "نامشخص")
-        preview_url = track.get("previewUrl")
-        artwork = track.get("artworkUrl100")
+    title = info.get("title", song_name)
+    uploader = info.get("uploader", "")
+    caption = f"🎵 {title}"
+    if uploader:
+        caption += f"\n👤 {uploader}"
 
-        caption = f"🎵 {title}\n👤 {artist}"
-
-        if preview_url:
-            try:
-                await update.message.reply_audio(
-                    audio=preview_url,
-                    title=title,
-                    performer=artist,
-                    caption=caption,
-                )
-            except Exception as e:
-                logger.error(f"Send audio error: {e}")
-                await update.message.reply_text(caption)
-        else:
-            await update.message.reply_text(caption)
+    try:
+        with open(mp3_path, "rb") as audio_file:
+            await update.message.reply_audio(audio=audio_file, title=title, caption=caption)
+    except Exception as e:
+        logger.error(f"Send audio error: {e}")
+        await update.message.reply_text("خطا در ارسال فایل صوتی.")
+    finally:
+        if os.path.exists(mp3_path):
+            os.remove(mp3_path)
 
 
 def download_instagram_media(url: str, output_path: str):
@@ -192,6 +217,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("booking", booking))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_audio))
 
