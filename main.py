@@ -241,9 +241,13 @@ async def handle_instagram_link(update: Update, context: ContextTypes.DEFAULT_TY
 
             if title != "نامشخص":
                 await update.message.reply_text("در حال دانلود آهنگ کامل... 🔍🎶")
-                query = f"{title} {artist}".strip()
                 unique_id = f"{update.message.message_id}_full"
+                query = f"{title} {artist}".strip()
                 success = await download_and_send_song(update, query, unique_id)
+                if not success and artist and artist != "نامشخص":
+                    # Fallback: artist name from recognition can be inaccurate,
+                    # try searching by title alone
+                    success = await download_and_send_song(update, title, unique_id + "_alt")
                 if not success:
                     await update.message.reply_text("دانلود آهنگ کامل ممکن نشد 😕")
         else:
