@@ -37,6 +37,91 @@ INSTAGRAM_REGEX = re.compile(
 )
 
 # -----------------------------------------------------------------------
+# Ethnic / regional keyword map
+# Each entry: group_label -> (list of trigger keywords, extra search terms
+# appended to the query to bias SoundCloud/YouTube search results)
+# -----------------------------------------------------------------------
+
+ETHNIC_KEYWORDS = {
+    "بندری": {
+        "triggers": [
+            "بندری", "هرمزگان", "بندرعباس", "میناب", "بشاگرد", "قشم",
+            "جاسک", "بندرلنگه", "رودان", "حاجی‌آباد", "بستک", "پارسیان",
+            "خمیر", "سیریک", "ابوموسی",
+        ],
+        "extra": "آهنگ بندری هرمزگان",
+    },
+    "ترکی": {
+        "triggers": [
+            "ترکی", "آذری", "آذربایجان", "تبریز", "ارومیه", "اردبیل",
+            "زنجان", "مراغه", "میانه", "خوی", "مرند", "اهر", "سراب",
+        ],
+        "extra": "آهنگ ترکی آذری",
+    },
+    "کردی": {
+        "triggers": [
+            "کردی", "کردستان", "سنندج", "کرمانشاه", "ایلام", "مریوان",
+            "سقز", "بانه", "پاوه", "جوانرود", "بوکان", "مهاباد",
+        ],
+        "extra": "آهنگ کردی",
+    },
+    "لری": {
+        "triggers": [
+            "لری", "بختیاری", "لرستان", "خرم‌آباد", "بروجرد", "الیگودرز",
+            "یاسوج", "چهارمحال", "شهرکرد", "اندیمشک",
+        ],
+        "extra": "آهنگ لری بختیاری",
+    },
+    "عربی": {
+        "triggers": [
+            "عربی", "خوزستانی", "خوزستان", "اهواز", "آبادان", "خرمشهر",
+            "شادگان", "سوسنگرد", "هویزه", "دزفول", "شوشتر", "ماهشهر",
+        ],
+        "extra": "آهنگ عربی خوزستانی",
+    },
+    "بلوچی": {
+        "triggers": [
+            "بلوچی", "بلوچستان", "زاهدان", "چابهار", "ایرانشهر", "خاش",
+            "سراوان", "نیکشهر", "کنارک", "سرباز", "راسک",
+        ],
+        "extra": "آهنگ بلوچی",
+    },
+    "گیلکی": {
+        "triggers": [
+            "گیلکی", "گیلان", "رشت", "انزلی", "لاهیجان", "لنگرود",
+            "تالش", "آستارا", "صومعه‌سرا", "فومن",
+        ],
+        "extra": "آهنگ گیلکی رشت",
+    },
+    "مازندرانی": {
+        "triggers": [
+            "مازندرانی", "مازنی", "مازندران", "ساری", "آمل", "بابل",
+            "قائم‌شهر", "بابلسر", "نور", "چالوس", "رامسر", "تنکابن",
+        ],
+        "extra": "آهنگ مازندرانی",
+    },
+    "ترکمن": {
+        "triggers": [
+            "ترکمنی", "ترکمن", "ترکمن‌صحرا", "گنبدکاووس", "گنبد کاووس",
+            "بندرترکمن", "بندر ترکمن", "آق‌قلا", "آق قلا", "کلاله",
+            "گمیش‌تپه", "گمیش تپه",
+        ],
+        "extra": "آهنگ ترکمنی",
+    },
+}
+
+
+def detect_ethnic_group(song_name: str):
+    """Check if the query mentions a region/ethnicity. Returns (label, extra) or None."""
+    lowered = song_name.strip()
+    for label, data in ETHNIC_KEYWORDS.items():
+        for kw in data["triggers"]:
+            if kw in lowered:
+                return label, data["extra"]
+    return None
+
+
+# -----------------------------------------------------------------------
 # /start and /booking commands
 # -----------------------------------------------------------------------
 
@@ -59,7 +144,7 @@ async def booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # -----------------------------------------------------------------------
-# Song search & download (SoundCloud -> YouTube -> Bandari fallback)
+# Song search & download (SoundCloud -> YouTube -> regional fallback)
 # -----------------------------------------------------------------------
 
 def download_song(query: str, output_base: str, search_prefix: str):
@@ -88,22 +173,31 @@ def download_song(query: str, output_base: str, search_prefix: str):
 
 
 async def download_and_send_song(update: Update, song_name: str, unique_id: str) -> bool:
-    """Try to download the full song (SoundCloud -> YouTube -> Bandari fallback) and send it.
+    """Try to download the full song (SoundCloud -> YouTube -> regional fallback) and send it.
     Returns True if a song was successfully sent, False otherwise."""
     output_base = f"/tmp/{unique_id}"
     mp3_path = output_base + ".mp3"
 
     info = None
 
-    sources = (
+    sources = [
         ("scsearch1", song_name, "ساندکلاود"),
         ("ytsearch1", f"{song_name} official audio", "یوتیوب"),
         ("ytsearch1", song_name, "یوتیوب"),
-        # Bandari fallback: if the normal search fails, retry with Bandari-specific keywords
-        ("scsearch1", f"{song_name} بندری", "ساندکلاود بندری"),
-        ("ytsearch1", f"{song_name} آهنگ بندری هرمزگان بندرعباس", "یوتیوب بندری"),
-        ("ytsearch1", f"{song_name} بندری میناب بشاگرد", "یوتیوب بندری"),
-    )
+    ]
+
+    # Regional/ethnic fallback: if the query mentions a specific region or
+    # ethnicity, retry the search biased toward that group's music.
+    group = detect_ethnic_group(song_name)
+    if group:
+        label, extra = group
+        sources.append(("scsearch1", f"{song_name} {extra}", f"ساندکلاود {label}"))
+        sources.append(("ytsearch1", f"{song_name} {extra}", f"یوتیوب {label}"))
+    else:
+        # Keep the original Bandari-specific fallback as a last resort
+        sources.append(("scsearch1", f"{song_name} بندری", "ساندکلاود بندری"))
+        sources.append(("ytsearch1", f"{song_name} آهنگ بندری هرمزگان بندرعباس", "یوتیوب بندری"))
+        sources.append(("ytsearch1", f"{song_name} بندری میناب بشاگرد", "یوتیوب بندری"))
 
     for search_prefix, query, label in sources:
         try:
