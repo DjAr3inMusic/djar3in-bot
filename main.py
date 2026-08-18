@@ -291,31 +291,50 @@ async def ethnic_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-def search_singer_tracks(singer: str, limit: int = 8):
-    """Search YouTube for a list of tracks by this singer, return list of dicts."""
+def _extract_tracks_from_search(query: str):
     ydl_opts = {
-        "format": "bestaudio/best",
         "quiet": True,
         "no_warnings": True,
-        "extract_flat": True,
-        "default_search": f"ytsearch{limit}",
+        "extract_flat": "in_playlist",
+        "skip_download": True,
     }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(query, download=False)
+        entries = info.get("entries", []) if info else []
+        tracks = []
+        for e in entries:
+            if not e:
+                continue
+            title = e.get("title", "").strip()
+            vid_id = e.get("id")
+            url = e.get("url")
+            if url and not url.startswith("http"):
+                # extract_flat sometimes returns just the video id in "url"
+                url = f"https://www.youtube.com/watch?v={url}"
+            if not url and vid_id:
+                url = f"https://www.youtube.com/watch?v={vid_id}"
+            if url and title:
+                tracks.append({"title": title, "url": url, "id": vid_id})
+        return tracks
+
+
+def search_singer_tracks(singer: str, limit: int = 8):
+    """Search YouTube (then SoundCloud as fallback) for tracks by this singer."""
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(singer, download=False)
-            entries = info.get("entries", []) if info else []
-            tracks = []
-            for e in entries:
-                if e:
-                    tracks.append({
-                        "title": e.get("title", singer),
-                        "url": e.get("url") or e.get("webpage_url") or e.get("id"),
-                        "id": e.get("id"),
-                    })
+        tracks = _extract_tracks_from_search(f"ytsearch{limit}:{singer}")
+        if tracks:
             return tracks
     except Exception as e:
-        logger.error(f"Track search error for {singer}: {e}")
-        return []
+        logger.error(f"YouTube track search error for {singer}: {e}")
+
+    try:
+        tracks = _extract_tracks_from_search(f"scsearch{limit}:{singer}")
+        if tracks:
+            return tracks
+    except Exception as e:
+        logger.error(f"SoundCloud track search error for {singer}: {e}")
+
+    return []
 
 
 async def singer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
