@@ -297,17 +297,104 @@ async def singer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     _, ethnic, singer = query.data.split(":", 2)
 
-    await query.edit_message_text(f"🔎🎵 در حال جستجو و دانلود آهنگ‌های {singer}...")
+    await query.edit_message_text(f"🔎 در حال پیدا کردن آهنگ‌های {singer}...")
 
-    unique_id = f"{query.message.message_id}_{singer}"
-    success = await download_and_send_song(query.message, singer, unique_id)
+    tracks = search_singer_tracks(singer)
 
-    if not success:
+    if not tracks:
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="😕 دانلود کامل ممکن نشد، در حال ارسال پیش‌نمایش...",
+            text=f"😕 آهنگی از {singer} پیدا نشد.",
         )
-        await send_itunes_preview(query.message, context, singer)
+        return
+
+    context.user_data[f"tracks_{singer}"] = tracks
+
+    keyboard = []
+    for i, track in enumerate(tracks):
+        title = track["title"]
+        if len(title) > 40:
+            title = title[:40] + "..."
+        keyboard.append([InlineKeyboardButton(f"🎵 {title}", callback_data=f"track:{singer}:{i}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data=f"ethnic:{ethnic}")])
+
+    await query.edit_message_text(
+        f"🎶 آهنگ‌های {singer} رو انتخاب کن:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+def search_singer_tracks(singer: str, limit: int = 8):
+    """Search YouTube for a list of tracks by this singer, return list of dicts."""
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,
+        "default_search": f"ytsearch{limit}",
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(singer, download=False)
+            entries = info.get("entries", [])
+            tracks = []
+            for e in entries:
+                if e:
+                    tracks.append({
+                        "title": e.get("title", singer),
+                        "url": e.get("url") or e.get("webpage_url"),
+                        "id": e.get("id"),
+                    })
+            return tracks
+    except Exception as e:
+        logger.error(f"Track search error for {singer}: {e}")
+        return []
+
+
+async def track_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    _, singer, index_str = query.data.split(":", 2)
+    index = int(index_str)
+
+    tracks = context.user_data.get(f"tracks_{singer}", [])
+    if index >= len(tracks):
+        await context.bot.send_message(chat_id=query.message.chat_id, text="😕 این آهنگ دیگه در دسترس نیست.")
+        return
+
+    track = tracks[index]
+    await query.edit_message_text(f"⏳ در حال دانلود «{track['title']}»...")
+
+    unique_id = f"{query.message.message_id}_{singer}_{index}"
+    output_base = f"/tmp/{unique_id}"
+    mp3_path = output_base + ".mp3"
+
+    try:
+        info = download_song(track["url"] or track["id"], output_base, "ytsearch1")
+    except Exception as e:
+        logger.error(f"Track download error: {e}")
+        info = None
+
+    if not info or not os.path.exists(mp3_path):
+        await context.bot.send_message(chat_id=query.message.chat_id, text="😕 دانلود این آهنگ ممکن نشد.")
+        return
+
+    title = info.get("title", track["title"])
+    uploader = info.get("uploader", "")
+    caption = f"🎵 {title}"
+    if uploader:
+        caption += f"\n👤 {uploader}"
+
+    try:
+        with open(mp3_path, "rb") as audio_file:
+            await context.bot.send_audio(chat_id=query.message.chat_id, audio=audio_file, title=title, caption=caption)
+    except Exception as e:
+        logger.error(f"Send track error: {e}")
+    finally:
+        if os.path.exists(mp3_path):
+            os.remove(mp3_path)
 
 
 async def back_to_ethnics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -567,7 +654,7 @@ def main():
     application.add_handler(CommandHandler("booking", booking))
     application.add_handler(CommandHandler("singers", singers_command))
     application.add_handler(CallbackQueryHandler(ethnic_selected, pattern="^ethnic:"))
-    application.add_handler(CallbackQueryHandler(singer_selected, pattern="^singer:"))
+    application.add_handler(CallbackQueryHandler(track_selected, pattern="^track:"))
     application.add_handler(CallbackQueryHandler(back_to_ethnics, pattern="^back_to_ethnics$"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
