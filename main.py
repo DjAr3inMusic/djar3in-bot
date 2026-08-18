@@ -127,8 +127,8 @@ def detect_ethnic_group(song_name: str):
 ETHNIC_SINGERS = {
     "بندری": [
         "مهران میررستمی", "مرشد میررستمی", "محسن فیروزیان", "حمیدرضا ذاکری",
-        "مروان و فیصل", "حشمت و همت", "شاهرخ غلامی", "محمدامین مؤمن‌زاده",
-        "دانیال درگ", "غلامحسین نظری", "ناصر عبداللهی", "فرامرز سالاری",
+        "فیصل و مروان اسماعیلی", "همت و حشمت لشکری", "شاهرخ غلامی", "محمدامین مؤمن‌زاده",
+        "دانیال درگ", "غلامحسین نظری", "ناصر عبداللهی", "فرامرز صالحی",
         "علی موسی‌زاده", "علی محبوب", "علی باقری", "امیرارسلان صالحی‌زاده",
         "محمد منصور", "محمد روهنده", "مرتضی شعمیر", "آرش کارکن",
         "معین علی‌نسب", "جاوید سفالگر", "احمد جمشید", "مصطفی جهانگیری",
@@ -141,7 +141,7 @@ ETHNIC_SINGERS = {
         "قنبر نارویی", "حبیب قلندری", "یاسین شهریاری", "فرزاد بخرد",
         "غلام مارگیری", "اسلام نظری", "وحید آور", "یونس توکلی",
         "ایمان سیاهپوشان", "بهروز سکتور", "مجید یحیایی", "محمود جهان",
-        "سعید شنبه‌زاده",
+        "سعید شنبه‌زاده", "علیرضا آرمین", "علی آرامی",
     ],
     "ترکی_آذری": [
         "رحیم شهریاری", "رحیم مؤذن‌زاده اردبیلی", "ودود مؤذن‌زاده اردبیلی",
@@ -291,6 +291,33 @@ async def ethnic_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def search_singer_tracks(singer: str, limit: int = 8):
+    """Search YouTube for a list of tracks by this singer, return list of dicts."""
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,
+        "default_search": f"ytsearch{limit}",
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(singer, download=False)
+            entries = info.get("entries", []) if info else []
+            tracks = []
+            for e in entries:
+                if e:
+                    tracks.append({
+                        "title": e.get("title", singer),
+                        "url": e.get("url") or e.get("webpage_url") or e.get("id"),
+                        "id": e.get("id"),
+                    })
+            return tracks
+    except Exception as e:
+        logger.error(f"Track search error for {singer}: {e}")
+        return []
+
+
 async def singer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -325,33 +352,6 @@ async def singer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-def search_singer_tracks(singer: str, limit: int = 8):
-    """Search YouTube for a list of tracks by this singer, return list of dicts."""
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": True,
-        "default_search": f"ytsearch{limit}",
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(singer, download=False)
-            entries = info.get("entries", [])
-            tracks = []
-            for e in entries:
-                if e:
-                    tracks.append({
-                        "title": e.get("title", singer),
-                        "url": e.get("url") or e.get("webpage_url"),
-                        "id": e.get("id"),
-                    })
-            return tracks
-    except Exception as e:
-        logger.error(f"Track search error for {singer}: {e}")
-        return []
-
-
 async def track_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -367,7 +367,7 @@ async def track_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track = tracks[index]
     await query.edit_message_text(f"⏳ در حال دانلود «{track['title']}»...")
 
-    unique_id = f"{query.message.message_id}_{singer}_{index}"
+    unique_id = f"{query.message.message_id}_{index}"
     output_base = f"/tmp/{unique_id}"
     mp3_path = output_base + ".mp3"
 
@@ -654,6 +654,7 @@ def main():
     application.add_handler(CommandHandler("booking", booking))
     application.add_handler(CommandHandler("singers", singers_command))
     application.add_handler(CallbackQueryHandler(ethnic_selected, pattern="^ethnic:"))
+    application.add_handler(CallbackQueryHandler(singer_selected, pattern="^singer:"))
     application.add_handler(CallbackQueryHandler(track_selected, pattern="^track:"))
     application.add_handler(CallbackQueryHandler(back_to_ethnics, pattern="^back_to_ethnics$"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
