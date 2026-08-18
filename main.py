@@ -452,14 +452,14 @@ async def track_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info, errors = download_track_with_fallback(track, singer, output_base)
 
     if not info or not os.path.exists(mp3_path):
-        # Show the real error from every attempt so the user can share this
-        # message for debugging instead of having to dig through Railway logs.
-        error_lines = "\n".join(f"• {e}" for e in errors) if errors else "(هیچ خطایی ثبت نشد)"
-        error_text = f"😕 دانلود این آهنگ ممکن نشد. جزئیات خطا برای بررسی:\n\n{error_lines}"
-        # Telegram messages have a 4096 character limit; trim just in case.
-        if len(error_text) > 4000:
-            error_text = error_text[:3990] + "\n...(بریده شد)"
-        await context.bot.send_message(chat_id=query.message.chat_id, text=error_text)
+        # Full download failed (commonly YouTube's bot-check on server IPs,
+        # or no SoundCloud results). Fall back to a short iTunes preview
+        # instead of leaving the user with nothing.
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="😕 دانلود کامل ممکن نشد، در حال ارسال پیش‌نمایش کوتاه...",
+        )
+        await send_itunes_preview(query.message, context, f"{singer} {track['title']}")
         return
 
     title = info.get("title", track["title"])
@@ -524,8 +524,11 @@ def download_song(query: str, output_base: str, search_prefix: str):
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=True)
-        if "entries" in info:
-            info = info["entries"][0]
+        if info and "entries" in info:
+            entries = [e for e in info["entries"] if e]
+            if not entries:
+                return None
+            info = entries[0]
         return info
 
 
