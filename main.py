@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 AUDD_API_TOKEN = os.environ.get("AUDD_API_TOKEN")
+# Optional: path to a cookies.txt file (Netscape format) to help yt-dlp bypass
+# YouTube's "Sign in to confirm you're not a bot" wall. Not required, but if
+# downloads keep failing this is usually the fix. Set the COOKIES_FILE env var
+# on Railway to the path of an uploaded cookies file if needed.
+COOKIES_FILE = os.environ.get("COOKIES_FILE")
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN environment variable is not set.")
@@ -298,6 +303,8 @@ def _extract_tracks_from_search(query: str):
         "extract_flat": "in_playlist",
         "skip_download": True,
     }
+    if COOKIES_FILE:
+        ydl_opts["cookiefile"] = COOKIES_FILE
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
         entries = info.get("entries", []) if info else []
@@ -355,6 +362,7 @@ async def singer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     context.user_data[f"tracks_{singer}"] = tracks
+    context.user_data[f"singer_name_{singer}"] = singer
 
     keyboard = []
     for i, track in enumerate(tracks):
@@ -369,6 +377,49 @@ async def singer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎶 آهنگ‌های {singer} رو انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
+
+
+def download_track_with_fallback(track: dict, singer: str, output_base: str):
+    """Try several strategies to fetch the actual audio for a chosen track.
+    Returns yt-dlp info dict on success, or None if every attempt failed."""
+    mp3_path = output_base + ".mp3"
+
+    attempts = []
+
+    # 1) The exact URL/id we found during the search step.
+    direct_target = track.get("url") or track.get("id")
+    if direct_target:
+        attempts.append(("direct link", direct_target, "ytsearch1"))
+
+    # 2) Re-search YouTube using "singer - title" (helps when the direct
+    #    link from extract_flat was stale, region-blocked, or malformed).
+    title = track.get("title", "")
+    if title:
+        attempts.append(("youtube re-search", f"{singer} {title}", "ytsearch1"))
+
+    # 3) Re-search YouTube using just the title (sometimes the singer name
+    #    duplicated in the query causes zero results).
+    if title:
+        attempts.append(("youtube title-only", title, "ytsearch1"))
+
+    # 4) Fall back to SoundCloud with singer + title.
+    if title:
+        attempts.append(("soundcloud", f"{singer} {title}", "scsearch1"))
+
+    for label, target, search_prefix in attempts:
+        try:
+            info = download_song(target, output_base, search_prefix)
+            if info and os.path.exists(mp3_path):
+                logger.info(f"Track download succeeded via {label}")
+                return info
+        except Exception as e:
+            logger.error(f"Track download attempt '{label}' failed: {e}")
+        finally:
+            # Clean up any partial file before trying the next strategy.
+            if os.path.exists(mp3_path) and not (os.path.getsize(mp3_path) > 0):
+                os.remove(mp3_path)
+
+    return None
 
 
 async def track_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -390,11 +441,7 @@ async def track_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output_base = f"/tmp/{unique_id}"
     mp3_path = output_base + ".mp3"
 
-    try:
-        info = download_song(track["url"] or track["id"], output_base, "ytsearch1")
-    except Exception as e:
-        logger.error(f"Track download error: {e}")
-        info = None
+    info = download_track_with_fallback(track, singer, output_base)
 
     if not info or not os.path.exists(mp3_path):
         await context.bot.send_message(chat_id=query.message.chat_id, text="😕 دانلود این آهنگ ممکن نشد.")
@@ -411,6 +458,7 @@ async def track_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_audio(chat_id=query.message.chat_id, audio=audio_file, title=title, caption=caption)
     except Exception as e:
         logger.error(f"Send track error: {e}")
+        await context.bot.send_message(chat_id=query.message.chat_id, text="😕 مشکلی در ارسال فایل پیش اومد.")
     finally:
         if os.path.exists(mp3_path):
             os.remove(mp3_path)
@@ -440,6 +488,9 @@ def download_song(query: str, output_base: str, search_prefix: str):
         "no_warnings": True,
         "noplaylist": True,
         "default_search": search_prefix,
+        "geo_bypass": True,
+        "retries": 3,
+        "fragment_retries": 3,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -448,6 +499,14 @@ def download_song(query: str, output_base: str, search_prefix: str):
             }
         ],
     }
+    if search_prefix.startswith("ytsearch") or (isinstance(query, str) and "youtube.com" in query):
+        # Trying multiple internal YouTube clients helps avoid the
+        # "Sign in to confirm you're not a bot" wall that plain requests
+        # sometimes hit.
+        ydl_opts["extractor_args"] = {"youtube": {"player_client": ["android", "web"]}}
+    if COOKIES_FILE:
+        ydl_opts["cookiefile"] = COOKIES_FILE
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=True)
         if "entries" in info:
@@ -566,6 +625,8 @@ def download_instagram_media(url: str, output_path: str):
         "quiet": True,
         "no_warnings": True,
     }
+    if COOKIES_FILE:
+        ydl_opts["cookiefile"] = COOKIES_FILE
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
 
