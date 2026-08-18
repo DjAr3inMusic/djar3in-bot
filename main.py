@@ -381,7 +381,11 @@ async def singer_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def download_track_with_fallback(track: dict, singer: str, output_base: str):
     """Try several strategies to fetch the actual audio for a chosen track.
-    Returns yt-dlp info dict on success, or None if every attempt failed."""
+    Returns (info, errors) where info is the yt-dlp info dict on success
+    (or None if every attempt failed), and errors is a list of
+    "label: error message" strings collected from every failed attempt,
+    so the caller can show the real reason to the user instead of a
+    generic failure message."""
     mp3_path = output_base + ".mp3"
 
     attempts = []
@@ -389,37 +393,41 @@ def download_track_with_fallback(track: dict, singer: str, output_base: str):
     # 1) The exact URL/id we found during the search step.
     direct_target = track.get("url") or track.get("id")
     if direct_target:
-        attempts.append(("direct link", direct_target, "ytsearch1"))
+        attempts.append(("لینک مستقیم", direct_target, "ytsearch1"))
 
     # 2) Re-search YouTube using "singer - title" (helps when the direct
     #    link from extract_flat was stale, region-blocked, or malformed).
     title = track.get("title", "")
     if title:
-        attempts.append(("youtube re-search", f"{singer} {title}", "ytsearch1"))
+        attempts.append(("سرچ مجدد یوتیوب", f"{singer} {title}", "ytsearch1"))
 
     # 3) Re-search YouTube using just the title (sometimes the singer name
     #    duplicated in the query causes zero results).
     if title:
-        attempts.append(("youtube title-only", title, "ytsearch1"))
+        attempts.append(("سرچ یوتیوب با اسم آهنگ", title, "ytsearch1"))
 
     # 4) Fall back to SoundCloud with singer + title.
     if title:
-        attempts.append(("soundcloud", f"{singer} {title}", "scsearch1"))
+        attempts.append(("ساندکلاود", f"{singer} {title}", "scsearch1"))
 
+    errors = []
     for label, target, search_prefix in attempts:
         try:
             info = download_song(target, output_base, search_prefix)
             if info and os.path.exists(mp3_path):
                 logger.info(f"Track download succeeded via {label}")
-                return info
+                return info, errors
+            errors.append(f"{label}: فایلی برنگشت (بدون خطا)")
         except Exception as e:
-            logger.error(f"Track download attempt '{label}' failed: {e}")
+            err_text = str(e)
+            logger.error(f"Track download attempt '{label}' failed: {err_text}")
+            errors.append(f"{label}: {err_text}")
         finally:
             # Clean up any partial file before trying the next strategy.
             if os.path.exists(mp3_path) and not (os.path.getsize(mp3_path) > 0):
                 os.remove(mp3_path)
 
-    return None
+    return None, errors
 
 
 async def track_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -441,10 +449,17 @@ async def track_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output_base = f"/tmp/{unique_id}"
     mp3_path = output_base + ".mp3"
 
-    info = download_track_with_fallback(track, singer, output_base)
+    info, errors = download_track_with_fallback(track, singer, output_base)
 
     if not info or not os.path.exists(mp3_path):
-        await context.bot.send_message(chat_id=query.message.chat_id, text="😕 دانلود این آهنگ ممکن نشد.")
+        # Show the real error from every attempt so the user can share this
+        # message for debugging instead of having to dig through Railway logs.
+        error_lines = "\n".join(f"• {e}" for e in errors) if errors else "(هیچ خطایی ثبت نشد)"
+        error_text = f"😕 دانلود این آهنگ ممکن نشد. جزئیات خطا برای بررسی:\n\n{error_lines}"
+        # Telegram messages have a 4096 character limit; trim just in case.
+        if len(error_text) > 4000:
+            error_text = error_text[:3990] + "\n...(بریده شد)"
+        await context.bot.send_message(chat_id=query.message.chat_id, text=error_text)
         return
 
     title = info.get("title", track["title"])
