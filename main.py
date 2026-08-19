@@ -27,11 +27,27 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 AUDD_API_TOKEN = os.environ.get("AUDD_API_TOKEN")
-# Optional: path to a cookies.txt file (Netscape format) to help yt-dlp bypass
-# YouTube's "Sign in to confirm you're not a bot" wall. Not required, but if
-# downloads keep failing this is usually the fix. Set the COOKIES_FILE env var
-# on Railway to the path of an uploaded cookies file if needed.
-COOKIES_FILE = os.environ.get("COOKIES_FILE")
+
+# COOKIES_FILE can be set on Railway either as:
+#  - a real file path (rare, if you upload a file manually), or
+#  - the raw text content of a cookies.txt file (Netscape format), which
+#    is what happens when you paste the cookie text directly into the
+#    Railway variable. If it looks like raw content, we write it to a
+#    real temp file so yt-dlp can read it as a path.
+_COOKIES_RAW = os.environ.get("COOKIES_FILE")
+COOKIES_FILE = None
+if _COOKIES_RAW:
+    if os.path.isfile(_COOKIES_RAW):
+        COOKIES_FILE = _COOKIES_RAW
+    else:
+        try:
+            COOKIES_FILE = "/tmp/cookies.txt"
+            with open(COOKIES_FILE, "w", encoding="utf-8") as _f:
+                _f.write(_COOKIES_RAW)
+            logger.info("Wrote COOKIES_FILE content to /tmp/cookies.txt")
+        except Exception as e:
+            logger.error(f"Failed to write cookies file: {e}")
+            COOKIES_FILE = None
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN environment variable is not set.")
@@ -515,9 +531,6 @@ def download_song(query: str, output_base: str, search_prefix: str):
         ],
     }
     if search_prefix.startswith("ytsearch") or (isinstance(query, str) and "youtube.com" in query):
-        # Trying multiple internal YouTube clients helps avoid the
-        # "Sign in to confirm you're not a bot" wall that plain requests
-        # sometimes hit.
         ydl_opts["extractor_args"] = {"youtube": {"player_client": ["android", "web"]}}
     if COOKIES_FILE:
         ydl_opts["cookiefile"] = COOKIES_FILE
