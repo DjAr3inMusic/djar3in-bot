@@ -341,6 +341,43 @@ def _extract_tracks_from_search(query: str):
         return tracks
 
 
+def _tokenize(text: str):
+    return [tok for tok in re.split(r"[\s\-_,\.]+", text.strip()) if tok]
+
+
+def find_best_track_url(query: str, engine_prefix: str, count: int = 6):
+    """Search for several candidates (instead of trusting the search
+    engine's single top result) and pick the one whose title best matches
+    every word in the query. This avoids returning a random cover, remix,
+    or a completely different singer whose track happens to rank first."""
+    try:
+        tracks = _extract_tracks_from_search(f"{engine_prefix}{count}:{query}")
+    except Exception as e:
+        logger.error(f"find_best_track_url search error for '{query}': {e}")
+        return None
+
+    if not tracks:
+        return None
+
+    query_tokens = _tokenize(query)
+    if not query_tokens:
+        return tracks[0]["url"]
+
+    best_track = None
+    best_score = -1
+    for track in tracks:
+        title_tokens = _tokenize(track.get("title", ""))
+        score = sum(
+            1 for qt in query_tokens
+            if any(qt in tt or tt in qt for tt in title_tokens)
+        )
+        if score > best_score:
+            best_score = score
+            best_track = track
+
+    return best_track["url"] if best_track else tracks[0]["url"]
+
+
 def search_singer_tracks(singer: str, limit: int = 8):
     """Search YouTube (then SoundCloud as fallback) for tracks by this singer."""
     try:
@@ -556,24 +593,33 @@ async def download_and_send_song(message, song_name: str, unique_id: str) -> boo
     info = None
 
     sources = [
-        ("scsearch1", song_name, "ساندکلاود"),
-        ("ytsearch1", f"{song_name} official audio", "یوتیوب"),
-        ("ytsearch1", song_name, "یوتیوب"),
+        ("scsearch", song_name, "ساندکلاود"),
+        ("ytsearch", f"{song_name} official audio", "یوتیوب"),
+        ("ytsearch", song_name, "یوتیوب"),
     ]
 
     group = detect_ethnic_group(song_name)
     if group:
         label, extra = group
-        sources.append(("scsearch1", f"{song_name} {extra}", f"ساندکلاود {label}"))
-        sources.append(("ytsearch1", f"{song_name} {extra}", f"یوتیوب {label}"))
+        sources.append(("scsearch", f"{song_name} {extra}", f"ساندکلاود {label}"))
+        sources.append(("ytsearch", f"{song_name} {extra}", f"یوتیوب {label}"))
     else:
-        sources.append(("scsearch1", f"{song_name} بندری", "ساندکلاود بندری"))
-        sources.append(("ytsearch1", f"{song_name} آهنگ بندری هرمزگان بندرعباس", "یوتیوب بندری"))
-        sources.append(("ytsearch1", f"{song_name} بندری میناب بشاگرد", "یوتیوب بندری"))
+        sources.append(("scsearch", f"{song_name} بندری", "ساندکلاود بندری"))
+        sources.append(("ytsearch", f"{song_name} آهنگ بندری هرمزگان بندرعباس", "یوتیوب بندری"))
+        sources.append(("ytsearch", f"{song_name} بندری میناب بشاگرد", "یوتیوب بندری"))
 
-    for search_prefix, query, label in sources:
+    for engine_prefix, query, label in sources:
+        search_prefix_single = f"{engine_prefix}1"
         try:
-            info = download_song(query, output_base, search_prefix)
+            best_url = find_best_track_url(query, engine_prefix, count=6)
+        except Exception as e:
+            logger.error(f"{label} best-match search error: {e}")
+            best_url = None
+
+        target = best_url if best_url else query
+
+        try:
+            info = download_song(target, output_base, search_prefix_single)
             if info and os.path.exists(mp3_path):
                 break
             info = None
