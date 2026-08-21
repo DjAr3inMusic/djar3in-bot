@@ -512,7 +512,7 @@ async def back_to_ethnics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def download_song(query: str, output_base: str, search_prefix: str):
     """Download a single track using yt-dlp with the given search engine prefix."""
     ydl_opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": output_base + ".%(ext)s",
         "ffmpeg_location": FFMPEG_PATH,
         "quiet": True,
@@ -520,8 +520,8 @@ def download_song(query: str, output_base: str, search_prefix: str):
         "noplaylist": True,
         "default_search": search_prefix,
         "geo_bypass": True,
-        "retries": 3,
-        "fragment_retries": 3,
+        "retries": 5,
+        "fragment_retries": 5,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -531,7 +531,9 @@ def download_song(query: str, output_base: str, search_prefix: str):
         ],
     }
     if search_prefix.startswith("ytsearch") or (isinstance(query, str) and "youtube.com" in query):
-        ydl_opts["extractor_args"] = {"youtube": {"player_client": ["android", "web"]}}
+        ydl_opts["extractor_args"] = {
+            "youtube": {"player_client": ["android", "ios", "web"]}
+        }
     if COOKIES_FILE:
         ydl_opts["cookiefile"] = COOKIES_FILE
 
